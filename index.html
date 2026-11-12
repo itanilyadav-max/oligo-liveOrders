@@ -5911,8 +5911,7 @@
                       '<span class="text-xs font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">\uD83E\uDDF3 ' + _rEsc(r.partner) + '</span></div>' +
                       '<div class="text-xs text-blue-700 font-semibold mt-0.5">\uD83D\uDCCD ' + _rEsc(r.zone || 'No location') + (r.building ? ' \u00B7 ' + _rEsc(r.building) : '') + '</div>' +
                       '<div class="text-xs text-gray-500 mt-0.5">' + _rEsc(r.items) + '</div>' +
-                      '<div class="flex flex-wrap gap-2 mt-1 text-xs"><span class="font-bold text-gray-700">' + r.boxes + ' boxes</span><span class="text-gray-500">' + _rInr(r.amount) + '</span>' +
-                      (r.prepaid ? '<span class="font-bold text-emerald-700">Prepaid</span>' : '<span class="font-bold text-amber-700">Collect cash</span>') +
+                      '<div class="flex flex-wrap gap-2 mt-1 text-xs"><span class="font-bold text-gray-700">' + r.boxes + ' boxes</span>' +
                       (r.slot ? '<span class="text-gray-400">' + _rEsc(r.slot) + '</span>' : '') + '</div>' +
                     '</div>' + _rGrpInputHtml(i, r) + '</label>';
             }).join('') : '<p class="text-sm text-gray-400 text-center py-6">No orders to group for this selection.</p>';
@@ -5940,7 +5939,7 @@
             var boxes = 0, cash = 0, zones = {}, partners = [];
             recs.forEach(function(r) { boxes += r.boxes; if (!r.prepaid) cash += r.amount; zones[r.zone || 'No location'] = 1; if (partners.indexOf(r.partner) < 0) partners.push(r.partner); });
             var sm = document.getElementById('runSummary');
-            if (sm) sm.innerHTML = recs.length ? (recs.length + ' orders \u00B7 ' + boxes + ' boxes \u00B7 Cash to collect ' + _rInr(cash) + '<br><span class="font-normal">' + _rEsc(Object.keys(zones).join(', ')) + '</span>') : 'No orders selected';
+            if (sm) sm.innerHTML = recs.length ? (recs.length + ' orders \u00B7 ' + boxes + ' boxes<br><span class="font-normal">' + _rEsc(Object.keys(zones).join(', ')) + '</span>') : 'No orders selected';
             var pa = document.getElementById('runPartAmts');
             if (pa) pa.innerHTML = partners.length ? partners.map(function(p, i) {
                 return '<div class="flex items-center gap-2"><span class="flex-1 text-sm font-semibold text-gray-700 truncate">' + _rEsc(p) + '</span>' +
@@ -6111,7 +6110,7 @@
                     '<div class="text-right"><div class="font-extrabold ' + (r.payStatus === 'Paid' ? 'text-emerald-700' : 'text-amber-700') + '">' + _rInr(r.amountGiven) + '</div>' +
                     '<div class="text-[11px] font-bold ' + (r.payStatus === 'Paid' ? 'text-emerald-600' : 'text-amber-600') + '">' + _rEsc(r.payStatus || 'Pending') + ' \u00B7 ' + _rEsc(r.payMode || '') + '</div></div></div>' +
                     '<div class="text-xs text-gray-600 mt-2">\uD83E\uDDF3 ' + pn + '</div>' + grpStrip +
-                    '<div class="text-xs text-gray-500 mt-1">' + (r.orderCount || 0) + ' orders \u00B7 ' + (r.totalBoxes || 0) + ' boxes \u00B7 Cash to collect ' + _rInr(r.cashToCollect) + (r.notes ? ' \u00B7 ' + _rEsc(r.notes) : '') + '</div>' +
+                    '<div class="text-xs text-gray-500 mt-1">' + (r.orderCount || 0) + ' orders \u00B7 ' + (r.totalBoxes || 0) + ' boxes' + (r.notes ? ' \u00B7 ' + _rEsc(r.notes) : '') + '</div>' +
                     '<div class="flex flex-wrap gap-2 mt-3">' +
                       '<button onclick="runPrintKey(' + i + ')" class="px-3 py-1.5 rounded-lg text-xs font-bold bg-gray-800 text-white"><i class="fas fa-print"></i> Print</button>' +
                       '<button onclick="runPrintAddrKey(' + i + ')" class="px-3 py-1.5 rounded-lg text-xs font-bold" style="background:#ede9fe;color:#5b21b6;" title="Compact print: client addresses, no items, less paper"><i class="fas fa-map-location-dot"></i> Address</button>' +
@@ -6183,8 +6182,8 @@
 
         window.runWhatsApp = function(i) {
             var k = window._runHistKeys[i], r = window._runs[k]; if (!r) return;
-            var lines = ['*' + r.name + '* \u2013 ' + _rFmt(r.date) + (r.slot ? ' ' + r.slot : ''), r.orderCount + ' orders, ' + r.totalBoxes + ' boxes, cash to collect ' + _rInr(r.cashToCollect), ''];
-            (r.orders || []).forEach(function(o, j) { lines.push((j + 1) + '. ' + (o.pgroup ? '[' + o.pgroup + '] ' : '') + o.customer + ' \u2013 ' + (o.zone || '') + ' ' + (o.address || o.building) + ' (' + o.boxes + ' boxes' + (o.prepaid ? ', prepaid' : ', collect ' + _rInr(o.amount)) + ')'); });
+            var lines = ['*' + r.name + '* \u2013 ' + _rFmt(r.date) + (r.slot ? ' ' + r.slot : ''), r.orderCount + ' orders, ' + r.totalBoxes + ' boxes', ''];
+            (r.orders || []).forEach(function(o, j) { lines.push((j + 1) + '. ' + (o.pgroup ? '[' + o.pgroup + '] ' : '') + o.customer + ' \u2013 ' + (o.zone || '') + ' ' + (o.address || o.building) + ' (' + o.boxes + ' boxes' + '' + ')'); });
             var ph = ((r.partners || []).length === 1 ? String(r.partners[0].phone || '').replace(/\D/g, '') : '');
             if (ph && ph.length === 10) ph = '91' + ph;
             window.open('https://wa.me/' + ph + '?text=' + encodeURIComponent(lines.join('\n')), '_blank');
@@ -6195,13 +6194,13 @@
             keys.forEach(function(k) {
                 var r = window._runs[k], pn = (r.partners || []).map(function(p) { return p.name; }).join(', ');
                 (r.orders || []).forEach(function(o) {
-                    rows.push([_rFmt(r.date), r.slot || '', r.name, pn, o.pgroup || '', o.customer, o.phone, o.zone, o.address || o.building, o.items, o.boxes, o.amount, o.prepaid ? 'Prepaid' : 'Collect', r.amountGiven || 0, r.payStatus || 'Pending', r.payMode || '']);
+                    rows.push([_rFmt(r.date), r.slot || '', r.name, pn, o.pgroup || '', o.customer, o.phone, o.zone, o.address || o.building, o.items, o.boxes, r.amountGiven || 0, r.payStatus || 'Pending', r.payMode || '']);
                 });
             });
             if (!rows.length) { showToast('No runs to export'); return; }
             try {
                 downloadXlsx('Oligo_DeliveryRuns_' + new Date().toISOString().slice(0, 10) + '.xlsx', 'Delivery Runs',
-                    ['Date', 'Slot', 'Group', 'Partners', 'Porter Group', 'Client', 'Phone', 'Location', 'Address', 'Items', 'Boxes', 'Order Amount', 'Prepaid / Collect', 'Group Amount Given', 'Pay Status', 'Pay Mode'],
+                    ['Date', 'Slot', 'Group', 'Partners', 'Porter Group', 'Client', 'Phone', 'Location', 'Address', 'Items', 'Boxes', 'Group Amount Given', 'Pay Status', 'Pay Mode'],
                     rows, [10, 10, 22, 22, 10, 22, 14, 18, 40, 40, 8, 12, 14, 16, 12, 10]);
                 showToast('\uD83D\uDCE5 Saved ' + rows.length + ' rows to Excel');
             } catch (e) { console.error(e); showToast('Excel export failed'); }
@@ -6236,8 +6235,8 @@
                       '<div class="m3"><span class="lb">Amount given</span><br><b>' + _rInr(g.p.amount) + '</b> \u00B7 ' + _rEsc(status) + '</div>' +
                     '</div>' +
                     '<table><thead><tr><th style="width:5%">#</th><th style="width:24%">Client</th><th style="width:21%">Location</th><th>Items</th><th style="width:8%" class="c">Boxes</th><th style="width:7%" class="c">Done</th></tr></thead><tbody>' + rows + '</tbody></table>' +
-                    '<div class="tot"><div><span class="lb">Orders</span><b>' + recs.length + '</b></div><div><span class="lb">Total boxes</span><b>' + boxes + '</b></div><div><span class="lb">Prepaid value</span><b>' + _rInr(prepaid) + '</b></div></div>' +
-                    '<div class="sig"><div>Packed by</div><div>' + _rEsc(g.p.name) + ' \u2013 signature</div><div>Cash received by</div></div>' +
+                    '<div class="tot"><div><span class="lb">Orders</span><b>' + recs.length + '</b></div><div><span class="lb">Total boxes</span><b>' + boxes + '</b></div></div>' +
+                    '<div class="sig"><div>Packed by</div><div>' + _rEsc(g.p.name) + ' \u2013 signature</div></div>' +
                     '</div>' + (bi < N - 1 ? '<div class="cut"></div>' : '');
             }).join('');
             var d = String(run.date || '').split('-');
@@ -6297,8 +6296,8 @@
                       '<div class="m3"><span class="lb">Amount given</span><b>' + _rInr(g.p.amount) + '</b> \u00B7 ' + _rEsc(status) + '</div>' +
                     '</div>' +
                     '<table><thead><tr><th style="width:4%" class="c">#</th><th style="width:21%">Client</th><th style="width:15%">Location</th><th style="width:47%">Address</th><th style="width:7%" class="c">Boxes</th><th style="width:6%" class="c">Done</th></tr></thead><tbody>' + rows + '</tbody></table>' +
-                    '<div class="tot"><div><span class="lb">Orders</span><b>' + recs.length + '</b></div><div><span class="lb">Total boxes</span><b>' + boxes + '</b></div><div><span class="lb">Prepaid value</span><b>' + _rInr(prepaid) + '</b></div></div>' +
-                    '<div class="sig"><div>Packed by</div><div>' + _rEsc(g.p.name) + ' \u2013 signature</div><div>Cash received by</div></div>' +
+                    '<div class="tot"><div><span class="lb">Orders</span><b>' + recs.length + '</b></div><div><span class="lb">Total boxes</span><b>' + boxes + '</b></div></div>' +
+                    '<div class="sig"><div>Packed by</div><div>' + _rEsc(g.p.name) + ' \u2013 signature</div></div>' +
                     '</div>' + (bi < N - 1 ? '<div class="cut"></div>' : '');
             }).join('');
             var d = String(run.date || '').split('-');
@@ -6688,7 +6687,7 @@
                 '.foot{display:flex;justify-content:space-between;margin-top:8px;font-size:9px;color:#64748b}thead{display:table-header-group}';
             var h = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + _rEsc(run.name) + ' \u2013 Clients & Locations</title><style>' + css + '</style></head><body>' +
                 '<div class="hdr"><div><h1>' + _rEsc(farmName || 'Oligo Farm') + ' \u2013 Clients &amp; Locations<em>' + (useG ? 'Porter groups' : 'List') + '</em></h1><h2>' + _rEsc(run.name) + ' ' + (/\brun$/i.test(String(run.name).trim()) ? '' : 'Run ') + '#' + (run.runNo || 1) + '</h2></div><div class="dt">' + dShort + (run.slot ? ' \u00B7 ' + _rEsc(run.slot) : '') + '</div></div>' +
-                '<div class="sum"><div><span class="lb">Clients</span><b>' + recs.length + '</b></div><div><span class="lb">Locations</span><b>' + Object.keys(locCount).length + '</b></div><div><span class="lb">Total boxes</span><b>' + totalBoxes + '</b></div><div><span class="lb">Cash to collect</span><b>' + _rInr(cash) + '</b></div>' +
+                '<div class="sum"><div><span class="lb">Clients</span><b>' + recs.length + '</b></div><div><span class="lb">Locations</span><b>' + Object.keys(locCount).length + '</b></div><div><span class="lb">Total boxes</span><b>' + totalBoxes + '</b></div>' +
                 '<div class="w"><span class="lb">' + (useG ? 'Porter groups' : 'Delivery partner' + (partners.length > 1 ? 's' : '')) + '</span><b>' + (useG ? (groups.filter(function(g) { return g.key !== '~'; }).length + ' groups' + (gAmtTotal ? ' \u00B7 ' + _rInr(gAmtTotal) : '')) : _rEsc(partners.join(', ') || '\u2014')) + '</b></div></div>' +
                 glance +
                 '<table><thead><tr><th style="width:5%" class="c">#</th><th style="width:' + (useG ? '22' : '25') + '%">Client</th>' + (useG ? '<th style="width:15%">Location</th>' : '') + '<th>Address</th>' + (useG ? '' : '<th style="width:17%">Partner</th>') + '<th style="width:8%" class="c">Boxes</th></tr></thead><tbody>' + body + '</tbody></table>' +
