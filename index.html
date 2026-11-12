@@ -6047,6 +6047,7 @@
                     '<div class="text-xs text-gray-500 mt-1">' + (r.orderCount || 0) + ' orders \u00B7 ' + (r.totalBoxes || 0) + ' boxes \u00B7 Cash to collect ' + _rInr(r.cashToCollect) + (r.notes ? ' \u00B7 ' + _rEsc(r.notes) : '') + '</div>' +
                     '<div class="flex flex-wrap gap-2 mt-3">' +
                       '<button onclick="runPrintKey(' + i + ')" class="px-3 py-1.5 rounded-lg text-xs font-bold bg-gray-800 text-white"><i class="fas fa-print"></i> Print</button>' +
+                      '<button onclick="runPrintAddrKey(' + i + ')" class="px-3 py-1.5 rounded-lg text-xs font-bold" style="background:#ede9fe;color:#5b21b6;" title="Compact print: client addresses, no items, less paper"><i class="fas fa-map-location-dot"></i> Address</button>' +
                       '<button onclick="runEdit(' + i + ')" class="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-100 text-amber-800">Edit amount</button>' +
                       '<button onclick="runWhatsApp(' + i + ')" class="px-3 py-1.5 rounded-lg text-xs font-bold bg-green-100 text-green-800">WhatsApp</button>' +
                       '<button onclick="runToggleDetail(' + i + ')" class="px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-100 text-blue-800">Clients &amp; locations</button>' +
@@ -6185,6 +6186,73 @@
                 '<script>window.onload=function(){setTimeout(function(){window.print();},300);};<\/script></body></html>';
             var w = window.open('', '_blank', 'width=900,height=900');
             if (!w) { showToast('Allow pop-ups to print the run sheet'); return; }
+            w.document.write(h); w.document.close();
+        };
+
+        // ---------- Compact ADDRESS print (no items, client address instead, small fonts = less paper) ----------
+        window.runPrintAddrKey = function(i) { var r = window._runs[window._runHistKeys[i]]; if (r) runPrintAddrObj(r); };
+        window.runPrintAddrObj = function(run) {
+            var all = (run.orders || []).slice();
+            var order = [], byP = {};
+            (run.partners || []).forEach(function(p) { if (!byP[p.name]) { byP[p.name] = { p: p, recs: [] }; order.push(p.name); } });
+            all.forEach(function(r) { if (!byP[r.partner]) { byP[r.partner] = { p: { name: r.partner, phone: '', amount: 0 }, recs: [] }; order.push(r.partner); } byP[r.partner].recs.push(r); });
+            order = order.filter(function(n) { return byP[n].recs.length; });
+            var N = order.length, status = run.payStatus || 'Pending';
+            var blocks = order.map(function(n, bi) {
+                var g = byP[n], recs = g.recs.slice().sort(function(a, b) { return String(a.zone).localeCompare(String(b.zone)) || String(a.customer).localeCompare(String(b.customer)); });
+                var zones = [], boxes = 0, prepaid = 0;
+                recs.forEach(function(r) { var z = _rShortLoc(r.zone) || 'No location'; if (zones.indexOf(z) < 0) zones.push(z); boxes += r.boxes; if (r.prepaid) prepaid += r.amount; });
+                var rows = recs.map(function(r, i) {
+                    var addr = String(r.address || r.building || '').replace(/\s+/g, ' ').trim();
+                    // keep only real delivery instructions (skip auto-filled date notes like 2026-11-12)
+                    var note = String(r.note || '').trim();
+                    if (/^\d{4}-\d{2}-\d{2}$/.test(note)) note = '';
+                    return '<tr><td class="c n">' + (i + 1) + '</td>' +
+                        '<td><b>' + _rEsc(r.customer) + '</b>' + (r.phone ? '<span class="s">' + _rEsc(r.phone) + '</span>' : '') + '</td>' +
+                        '<td><span class="chip">' + _rEsc(_rShortLoc(r.zone) || '-') + '</span></td>' +
+                        '<td class="ad">' + (addr ? _rEsc(addr) : '<span class="s">\u2014</span>') + (note ? '<i class="nt">Note: ' + _rEsc(note) + '</i>' : '') + '</td>' +
+                        '<td class="c bxs">' + r.boxes + '</td><td class="c"><span class="bx"></span></td></tr>';
+                }).join('');
+                return '<div class="blk">' +
+                    '<div class="meta">' +
+                      '<div class="m1"><span class="lb">Delivery ' + (bi + 1) + ' of ' + N + '</span><b class="nm">' + _rEsc(g.p.name) + '</b>' + (g.p.phone ? '<span class="ph">' + _rEsc(g.p.phone) + '</span>' : '') + '</div>' +
+                      '<div class="m2"><span class="lb">Locations</span>' + _rEsc(zones.join(', ')) + '</div>' +
+                      '<div class="m3"><span class="lb">Amount given</span><b>' + _rInr(g.p.amount) + '</b> \u00B7 ' + _rEsc(status) + '</div>' +
+                    '</div>' +
+                    '<table><thead><tr><th style="width:4%" class="c">#</th><th style="width:21%">Client</th><th style="width:15%">Location</th><th style="width:47%">Address</th><th style="width:7%" class="c">Boxes</th><th style="width:6%" class="c">Done</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+                    '<div class="tot"><div><span class="lb">Orders</span><b>' + recs.length + '</b></div><div><span class="lb">Total boxes</span><b>' + boxes + '</b></div><div><span class="lb">Prepaid value</span><b>' + _rInr(prepaid) + '</b></div></div>' +
+                    '<div class="sig"><div>Packed by</div><div>' + _rEsc(g.p.name) + ' \u2013 signature</div><div>Cash received by</div></div>' +
+                    '</div>' + (bi < N - 1 ? '<div class="cut"></div>' : '');
+            }).join('');
+            var d = String(run.date || '').split('-');
+            var dShort = d.length === 3 ? d[2] + '/' + d[1] + '/' + d[0].slice(2) : (run.date || '');
+            var css =
+                '@page{size:A4;margin:8mm 8mm}*{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}' +
+                'body{font-family:Inter,"Segoe UI",Arial,sans-serif;font-size:10px;color:#0f172a;margin:0;line-height:1.3}' +
+                '.hdr{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 12px;margin-bottom:8px;border:1px solid #a7f3d0;border-left:5px solid #059669;border-radius:10px;background:#ecfdf5}' +
+                '.hdr h1{font-size:15px;margin:0;font-weight:800;letter-spacing:-.01em}.hdr h1 em{font-style:normal;font-size:8.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;background:#059669;color:#fff;padding:2px 7px;border-radius:99px;margin-left:6px;vertical-align:2px}' +
+                '.hdr h2{font-size:11px;margin:1px 0 0;font-weight:600;color:#334155}.hdr .dt{font-size:10px;font-weight:700;background:#fff;border:1px solid #a7f3d0;color:#065f46;padding:3px 10px;border-radius:99px;white-space:nowrap}' +
+                '.meta{display:flex;gap:6px}.meta>div{border:1px solid #cbd5e1;border-radius:8px;padding:4px 8px;background:#f8fafc;font-size:9.5px}' +
+                '.m1{flex:1.1}.m2{flex:2}.m3{flex:.9}.nm{font-size:11px;display:block}.ph{color:#64748b;font-size:9px}' +
+                '.lb{display:block;font-size:7.5px;color:#64748b;text-transform:uppercase;font-weight:800;letter-spacing:.07em;margin-bottom:1px}' +
+                'html,body{width:100%;max-width:100%}table{width:100%;table-layout:fixed;border-collapse:separate;border-spacing:0;margin-top:6px;border:1px solid #cbd5e1;border-radius:8px;overflow:hidden}td,th{overflow-wrap:anywhere;word-break:break-word}' +
+                'th{background:#f1f5f9;font-size:7.5px;text-transform:uppercase;text-align:left;letter-spacing:.06em;color:#475569;padding:4px 6px;border-bottom:1px solid #cbd5e1}' +
+                'td{padding:3px 6px;vertical-align:middle;border-bottom:1px solid #e2e8f0}tbody tr:last-child td{border-bottom:0}tbody tr:nth-child(even) td{background:#f8fafc}tr{page-break-inside:avoid;break-inside:avoid}' +
+                '.c{text-align:center}th.c{text-align:center}.n{color:#94a3b8;font-weight:600}' +
+                'td b{font-size:10px}.s{display:block;font-size:8.5px;color:#64748b;font-weight:500}' +
+                '.chip{display:inline-block;background:#d1fae5;color:#065f46;font-weight:700;font-size:8.5px;padding:1px 7px;border-radius:99px}' +
+                '.ad{font-size:9px;color:#1e293b;line-height:1.25}.nt{display:block;font-size:8.5px;color:#92400e;margin-top:1px}' +
+                '.bxs{font-weight:800;font-size:11px}.bx{display:inline-block;width:13px;height:13px;border:1.4px solid #0f172a;border-radius:3px;vertical-align:middle}' +
+                '.tot{display:flex;gap:6px;margin-top:6px}.tot div{flex:1;border:1px solid #0f172a;border-radius:8px;padding:3px 6px;text-align:center}.tot b{display:block;font-size:12px}' +
+                '.meta,.tot,.sig{page-break-inside:avoid;break-inside:avoid}' +
+                '.sig{display:flex;gap:22px;margin-top:20px}.sig div{flex:1;border-top:1px solid #0f172a;padding-top:3px;text-align:center;font-size:9px;color:#334155}' +
+                '.cut{border-top:1.5px dashed #94a3b8;margin:10px 0}';
+            var h = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + _rEsc(run.name) + ' \u2013 Address Sheet</title><style>' + css + '</style></head><body>' +
+                '<div class="hdr"><div><h1>' + _rEsc(farmName || 'Oligo Farm') + ' \u2013 Delivery Run Sheet<em>Address</em></h1><h2>' + _rEsc(run.name) + ' ' + (/\brun$/i.test(String(run.name).trim()) ? '' : 'Run ') + '#' + (run.runNo || 1) + '</h2></div><div class="dt">' + dShort + (run.slot ? ' \u00B7 ' + _rEsc(run.slot) : '') + '</div></div>' +
+                blocks +
+                '<script>window.onload=function(){setTimeout(function(){window.print();},300);};<\/script></body></html>';
+            var w = window.open('', '_blank', 'width=900,height=900');
+            if (!w) { showToast('Allow pop-ups to print the address sheet'); return; }
             w.document.write(h); w.document.close();
         };
 
