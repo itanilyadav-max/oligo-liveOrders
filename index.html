@@ -1364,6 +1364,7 @@
                                     <input type="date" id="runDate" onchange="renderRunsTab()" class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
                                 </div>
                                 <label class="flex items-center gap-2 text-sm font-semibold text-gray-600 pb-2 cursor-pointer"><input type="checkbox" id="runAllDates" onchange="renderRunsTab()" class="w-4 h-4"> All dates</label>
+                                <label class="flex items-center gap-2 text-sm font-semibold text-gray-600 pb-2 cursor-pointer" title="Tick this to see orders that are already Delivered, so you can make a run (or porter groups) for a delivery that is already over"><input type="checkbox" id="runIncDelivered" checked onchange="renderRunsTab()" class="w-4 h-4"> Include delivered orders</label>
                                 <div>
                                     <label class="block text-[11px] font-bold text-gray-500 uppercase mb-1">Slot</label>
                                     <select id="runSlot" onchange="renderRunsTab()" class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
@@ -1389,6 +1390,13 @@
                                 </div>
                                 <p class="text-xs text-gray-500 mb-2">Tap a location to select every order going there.</p>
                                 <div id="runZones" class="flex flex-wrap gap-2 mb-3"></div>
+                                <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:12px;padding:10px 12px;border-radius:12px;background:#f5f3ff;border:1px solid #ddd6fe;">
+                                    <span style="font-size:12px;font-weight:800;color:#5b21b6;"><i class="fas fa-users"></i> Porter groups <span style="font-weight:600;color:#7c3aed;">(optional)</span></span>
+                                    <input type="text" id="runGrpQuick" maxlength="3" placeholder="A" oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9]/g,'')" style="width:52px;text-align:center;font-weight:800;text-transform:uppercase;border:2px solid #c4b5fd;border-radius:10px;padding:5px 2px;outline:none;background:#fff;">
+                                    <button type="button" onclick="runApplyGrp()" style="background:#7c3aed;color:#fff;border:none;border-radius:10px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;">Set for ticked orders</button>
+                                    <button type="button" onclick="runClearGrp()" style="background:#fff;color:#6b7280;border:1px solid #d1d5db;border-radius:10px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;">Clear groups</button>
+                                    <span style="flex-basis:100%;font-size:11px;color:#6d28d9;line-height:1.4;">Type <b>A, B, C, D&hellip;</b> in the GROUP box beside each client &mdash; every client with the same letter becomes one porter group. Faster: tap a location above (or tick clients), type a letter here and press <b>Set for ticked orders</b>.</span>
+                                </div>
                                 <div id="runOrders" class="space-y-2"></div>
                             </div>
 
@@ -1397,6 +1405,8 @@
                                 <label class="block text-[11px] font-bold text-gray-500 uppercase mb-1">Group name</label>
                                 <input type="text" id="runGroupName" placeholder="e.g. Andheri Run (auto if blank)" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-3">
                                 <div id="runSummary" class="text-xs font-bold text-emerald-700 bg-emerald-50 rounded-lg p-2 mb-3">No orders selected</div>
+                                <label class="block text-[11px] font-bold text-gray-500 uppercase mb-1">Porter groups &mdash; who goes where &amp; expense</label>
+                                <div id="runGroupBox" class="mb-3"><p class="text-xs text-gray-400">No groups yet. Type A / B / C&hellip; next to the clients.</p></div>
                                 <label class="block text-[11px] font-bold text-gray-500 uppercase mb-1">Amount given to partners (&#8377;)</label>
                                 <div id="runPartAmts" class="space-y-2 mb-2"></div>
                                 <label class="block text-[11px] font-bold text-gray-500 uppercase mb-1">Total amount for this group (&#8377;)</label>
@@ -1434,6 +1444,7 @@
                         <div id="runHistTotals" class="grid grid-cols-2 md:grid-cols-4 gap-3"></div>
                         <div id="runHistList" class="space-y-3"></div>
                         <div id="runPartSummary" class="bg-white p-4 md:p-5 rounded-2xl card-shadow border border-gray-100"></div>
+                        <div id="runTrashList" class="hidden"></div>
                     </div>
                 </div>
 
@@ -5774,7 +5785,7 @@
         // Stored at deliveryRuns/{farmUid}/{runId}; each order in a run also gets
         // runId/runName so it can't be put in two groups by mistake.
         // =================================================================
-        window._runs = {}; window._runSel = {}; window._runPartSel = {}; window._runPartAmt = {};
+        window._runs = {}; window._runSel = {}; window._runPartSel = {}; window._runPartAmt = {}; window._runGrp = {}; window._runGrpInfo = {}; window._runGrpLabels = [];
         window._runShown = []; window._runPartList = []; window._runZones = []; window._runHistKeys = [];
 
         function _rEsc(x) { return String(x == null ? '' : x).replace(/[&<>"]/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
@@ -5811,10 +5822,16 @@
             var dEl = document.getElementById('runDate'), sEl = document.getElementById('runSlot'), aEl = document.getElementById('runAllDates');
             var day = dEl ? dEl.value : '', slot = sEl ? sEl.value : '', all = !!(aEl && aEl.checked);
             var out = [], noPartner = 0;
+            var okSt = ['ACCEPTED', 'PREPARING', 'READY_FOR_PICKUP'];
+            var incEl = document.getElementById('runIncDelivered'); var _incD = !!(incEl && incEl.checked); if (_incD) okSt.push('DELIVERED', 'OUT_FOR_DELIVERY', 'COMPLETED');
+            var _doneSt = ['DELIVERED', 'OUT_FOR_DELIVERY', 'COMPLETED'], hiddenDone = 0;
             Object.keys(ordersData || {}).forEach(function(oid) {
                 var o = ordersData[oid];
                 if (!o || o.restaurantId !== currentUid) return;
-                if (['ACCEPTED', 'PREPARING', 'READY_FOR_PICKUP'].indexOf(o.status) < 0) return;
+                if (okSt.indexOf(o.status) < 0) {
+                    if (!_incD && _doneSt.indexOf(o.status) >= 0 && !o.runId && o.deliveryAgent) { var _t = o.requestedDate || o.createdAt; if ((all || !day || (_t && _rDay(_t) === day)) && (!slot || (o.deliverySlot || o.slot || '') === slot)) hiddenDone++; }
+                    return;
+                }
                 if (o.runId) return;
                 var ts = o.requestedDate || o.createdAt;
                 if (!all && day && (!ts || _rDay(ts) !== day)) return;
@@ -5823,7 +5840,7 @@
                 out.push(_rOrderRec(oid, o));
             });
             out.sort(function(a, b) { return String(a.zone).localeCompare(String(b.zone)) || String(a.customer).localeCompare(String(b.customer)); });
-            window._runNoPartner = noPartner;
+            window._runNoPartner = noPartner; window._runHiddenDone = hiddenDone;
             return out;
         }
 
@@ -5862,7 +5879,10 @@
 
             var note = document.getElementById('runNoPartnerNote');
             if (note) {
-                if (window._runNoPartner > 0) { note.textContent = '\u26A0 ' + window._runNoPartner + ' accepted order(s) have no delivery partner assigned yet \u2013 assign them in Orders (Live) so they appear here.'; note.classList.remove('hidden'); }
+                var _msg = [];
+                if (window._runNoPartner > 0) _msg.push('\u26A0 ' + window._runNoPartner + ' order(s) have no delivery partner assigned \u2013 they cannot be listed here. Assign a partner in Orders (Live), or try a different date / All dates.');
+                if (window._runHiddenDone > 0) _msg.push(window._runHiddenDone + ' delivered order(s) are hidden \u2013 tick \u201CInclude delivered orders\u201D to see them.');
+                if (_msg.length) { note.textContent = _msg.join('  '); note.classList.remove('hidden'); }
                 else note.classList.add('hidden');
             }
 
@@ -5894,7 +5914,7 @@
                       '<div class="flex flex-wrap gap-2 mt-1 text-xs"><span class="font-bold text-gray-700">' + r.boxes + ' boxes</span><span class="text-gray-500">' + _rInr(r.amount) + '</span>' +
                       (r.prepaid ? '<span class="font-bold text-emerald-700">Prepaid</span>' : '<span class="font-bold text-amber-700">Collect cash</span>') +
                       (r.slot ? '<span class="text-gray-400">' + _rEsc(r.slot) + '</span>' : '') + '</div>' +
-                    '</div></label>';
+                    '</div>' + _rGrpInputHtml(i, r) + '</label>';
             }).join('') : '<p class="text-sm text-gray-400 text-center py-6">No orders to group for this selection.</p>';
 
             runRefreshForm();
@@ -5926,6 +5946,26 @@
                 return '<div class="flex items-center gap-2"><span class="flex-1 text-sm font-semibold text-gray-700 truncate">' + _rEsc(p) + '</span>' +
                     '<input type="number" min="0" placeholder="0" value="' + _rEsc(window._runPartAmt[p] || '') + '" oninput="runPartAmtChange(' + i + ',this.value)" class="w-28 border border-gray-300 rounded-lg px-2 py-1.5 text-sm"></div>';
             }).join('') : '<p class="text-xs text-gray-400">Select orders to enter amounts.</p>';
+            var gbox = document.getElementById('runGroupBox');
+            if (gbox) {
+                var gm = {}, ung = 0;
+                recs.forEach(function(r) {
+                    var g = window._runGrp[r.oid] || '';
+                    if (!g) { ung++; return; }
+                    var x = gm[g] || (gm[g] = { n: 0, b: 0, z: [] });
+                    x.n++; x.b += r.boxes; var z = _rShortLoc(r.zone) || 'No location'; if (x.z.indexOf(z) < 0) x.z.push(z);
+                });
+                var labels = Object.keys(gm).sort(); window._runGrpLabels = labels;
+                gbox.innerHTML = labels.length ? labels.map(function(g, gi) {
+                    var x = gm[g], c = _rGrpColor(g), inf = window._runGrpInfo[g] || {};
+                    return '<div style="border:1.5px solid ' + c.bd + ';background:' + c.bg + ';border-radius:12px;padding:8px 10px;margin-bottom:8px;">' +
+                        '<div style="display:flex;align-items:center;gap:8px;"><span style="font-weight:800;font-size:16px;color:' + c.fg + ';min-width:26px;">' + _rEsc(g) + '</span><span style="font-size:11px;color:#475569;font-weight:700;">' + x.n + ' client' + (x.n === 1 ? '' : 's') + ' \u00B7 ' + x.b + ' boxes</span></div>' +
+                        '<div style="font-size:11px;color:#334155;margin:2px 0 6px;">\uD83D\uDCCD ' + _rEsc(x.z.join(', ')) + '</div>' +
+                        '<div style="display:flex;gap:6px;"><input type="text" placeholder="Porter name (optional)" value="' + _rEsc(inf.name || '') + '" oninput="runGrpInfoChange(' + gi + ',\'name\',this.value)" style="flex:1;min-width:0;border:1px solid #d1d5db;border-radius:8px;padding:6px 8px;font-size:12px;background:#fff;">' +
+                        '<input type="number" min="0" placeholder="\u20B9 0" value="' + _rEsc(inf.amount || '') + '" oninput="runGrpInfoChange(' + gi + ',\'amount\',this.value)" style="width:84px;border:1px solid #d1d5db;border-radius:8px;padding:6px 8px;font-size:12px;background:#fff;"></div></div>';
+                }).join('') + (ung ? '<p style="font-size:11px;font-weight:700;color:#b45309;margin:0 0 4px;">\u26A0 ' + ung + ' ticked client' + (ung === 1 ? ' has' : 's have') + ' no group</p>' : '')
+                : '<p class="text-xs text-gray-400">No groups yet. Type A / B / C\u2026 next to the clients.</p>';
+            }
             window._runFormPartners = partners;
             var dis = recs.length === 0;
             ['runSaveBtn', 'runSavePrintBtn'].forEach(function(id) { var b = document.getElementById(id); if (b) { b.disabled = dis; b.style.opacity = dis ? '.5' : '1'; } });
@@ -5946,6 +5986,17 @@
             var partners = [], seen = {};
             recs.forEach(function(r) { if (!seen[r.partner]) { seen[r.partner] = 1; partners.push(r.partner); } });
             var total = parseFloat((document.getElementById('runTotalAmt') || {}).value) || 0;
+            var grpInfoS = window._runGrpInfo || {}, grpLabels = [];
+            recs.forEach(function(r) { var g = (window._runGrp || {})[r.oid] || ''; r.pgroup = g; if (g && grpLabels.indexOf(g) < 0) grpLabels.push(g); });
+            grpLabels.sort();
+            var groups = grpLabels.map(function(g) {
+                var rr = recs.filter(function(x) { return x.pgroup === g; }), zs = [], bx = 0;
+                rr.forEach(function(x) { var z = _rShortLoc(x.zone) || 'No location'; if (zs.indexOf(z) < 0) zs.push(z); bx += (parseInt(x.boxes) || 0); });
+                var inf = grpInfoS[g] || {};
+                return { label: g, name: String(inf.name || '').trim(), amount: parseFloat(inf.amount) || 0, orderCount: rr.length, boxes: bx, zones: zs };
+            });
+            var gSum = groups.reduce(function(a, g) { return a + g.amount; }, 0);
+            if (!total && gSum > 0) total = gSum;
             var partRows = partners.map(function(n) {
                 var a = parseFloat(window._runPartAmt[n]);
                 return { name: n, phone: phones[n] || '', amount: isNaN(a) ? 0 : a };
@@ -5964,7 +6015,7 @@
             var key = push(ref(db, 'deliveryRuns/' + currentUid)).key;
             var run = {
                 name: name, runNo: sameDay + 1, date: runDate, slot: slot, partners: partRows, zones: zoneList,
-                orders: recs, orderCount: recs.length, totalBoxes: boxes, orderValue: orderVal, cashToCollect: cash, prepaidValue: prepaid,
+                orders: recs, groups: groups, status: 'ACTIVE', orderCount: recs.length, totalBoxes: boxes, orderValue: orderVal, cashToCollect: cash, prepaidValue: prepaid,
                 amountGiven: total, payMode: (document.getElementById('runPayMode') || {}).value || 'Cash',
                 payStatus: (document.getElementById('runPayStatus') || {}).value || 'Pending',
                 notes: ((document.getElementById('runNotes') || {}).value || '').trim(), createdAt: Date.now(), farmId: currentUid
@@ -5974,7 +6025,7 @@
             recs.forEach(function(r) { updates['orders/' + r.oid + '/runId'] = key; updates['orders/' + r.oid + '/runName'] = name; });
             update(ref(db), updates).then(function() {
                 showToast('\u2705 Run saved: ' + name);
-                window._runSel = {}; window._runPartAmt = {};
+                window._runSel = {}; window._runPartAmt = {}; window._runGrp = {}; window._runGrpInfo = {};
                 ['runGroupName', 'runTotalAmt', 'runNotes'].forEach(function(id) { var e = document.getElementById(id); if (e) e.value = ''; });
                 if (andPrint) runPrintObj(run);
                 renderRunsTab();
@@ -5983,7 +6034,8 @@
 
         function loadDeliveryRuns(uid) {
             onValue(ref(db, 'deliveryRuns/' + uid), function(snap) {
-                window._runs = snap.val() || {};
+                var all = snap.val() || {}; window._runs = {}; window._runsDeleted = {};
+                Object.keys(all).forEach(function(k) { if (all[k] && all[k].deleted) window._runsDeleted[k] = all[k]; else window._runs[k] = all[k]; });
                 var pane = document.getElementById('runHistoryPane');
                 if (pane && !pane.classList.contains('hidden')) renderRunHistory();
             });
@@ -6036,14 +6088,29 @@
                 var pn = (r.partners || []).map(function(p) { return _rEsc(p.name) + (p.amount ? ' (' + _rInr(p.amount) + ')' : ''); }).join(', ');
                 var det = (r.orders || []).map(function(o, j) {
                     return '<tr class="border-t"><td class="py-1 pr-2 text-gray-400">' + (j + 1) + '</td><td class="py-1 pr-2 font-semibold">' + _rEsc(o.customer) + '</td><td class="py-1 pr-2 text-blue-700">' + _rEsc(o.zone || '-') + '</td>' +
-                        '<td class="py-1 pr-2 text-gray-500">' + _rEsc(o.address || o.building) + '</td><td class="py-1 pr-2">' + _rEsc(o.partner) + '</td><td class="py-1 text-right">' + o.boxes + '</td></tr>';
+                        '<td class="py-1 pr-2 text-gray-500">' + _rEsc(o.address || o.building) + '</td><td class="py-1 pr-2">' + _rEsc(o.partner) + '</td><td class="py-1 pr-2">' + _rGrpBadge(o.pgroup) + '</td><td class="py-1 text-right">' + o.boxes + '</td></tr>';
                 }).join('');
+                var lockWhy = _rRunLock(r), gsum = _rGroupSummary(r);
+                var lockBadge = lockWhy ? ' <span style="font-size:10px;font-weight:800;color:#047857;background:#d1fae5;border:1px solid #6ee7b7;border-radius:99px;padding:2px 8px;vertical-align:2px;">\uD83D\uDD12 ' + (lockWhy === 'completed' ? 'Completed' : (lockWhy === 'past' ? 'Past run' : 'Delivered')) + '</span>' : '';
+                var grpStrip = gsum.length ? '<div class="flex flex-wrap gap-2 mt-2">' + gsum.map(function(g) {
+                    var c = _rGrpColor(g.label);
+                    return '<span style="font-size:11px;font-weight:700;color:' + c.fg + ';background:' + c.bg + ';border:1.5px solid ' + c.bd + ';border-radius:10px;padding:3px 9px;"><b style="font-size:13px;">' + _rEsc(g.label) + '</b>' + (g.name ? ' ' + _rEsc(g.name) : '') + ' \u00B7 ' + g.n + ' clients \u00B7 ' + g.boxes + ' boxes' + (g.amount ? ' \u00B7 ' + _rInr(g.amount) : '') + ' \u00B7 \uD83D\uDCCD ' + _rEsc(g.zones.join(', ')) + '</span>';
+                }).join('') + '</div>' : '';
+                var grpBtn = '<button onclick="runGroupsEdit(' + i + ')" class="px-3 py-1.5 rounded-lg text-xs font-bold" style="background:#f5f3ff;color:#5b21b6;border:1px solid #ddd6fe;"><i class="fas fa-users"></i> Porter groups</button>';
+                var doneBtn = '', delBtn;
+                if (lockWhy) {
+                    delBtn = '<span title="This run is locked \u2013 it cannot be deleted" style="padding:6px 12px;border-radius:8px;font-size:12px;font-weight:700;background:#f1f5f9;color:#94a3b8;cursor:not-allowed;">\uD83D\uDD12 Delete locked</span>';
+                    if (lockWhy === 'completed') doneBtn = '<button onclick="runReopen(' + i + ')" class="px-3 py-1.5 rounded-lg text-xs font-bold" style="background:#fff;color:#6b7280;border:1px solid #d1d5db;">Reopen</button>';
+                } else {
+                    doneBtn = '<button onclick="runComplete(' + i + ')" class="px-3 py-1.5 rounded-lg text-xs font-bold" style="background:#d1fae5;color:#065f46;border:1px solid #6ee7b7;"><i class="fas fa-check-circle"></i> Mark completed</button>';
+                    delBtn = '<button onclick="runDelete(' + i + ')" class="px-3 py-1.5 rounded-lg text-xs font-bold bg-red-100 text-red-700">Delete</button>';
+                }
                 return '<div class="bg-white rounded-2xl card-shadow border border-gray-100 p-4">' +
-                    '<div class="flex flex-wrap justify-between gap-2"><div><div class="font-extrabold text-gray-800">' + _rEsc(r.name) + ' <span class="text-xs font-normal text-gray-400">#' + (r.runNo || 1) + '</span></div>' +
+                    '<div class="flex flex-wrap justify-between gap-2"><div><div class="font-extrabold text-gray-800">' + _rEsc(r.name) + ' <span class="text-xs font-normal text-gray-400">#' + (r.runNo || 1) + '</span>' + lockBadge + '</div>' +
                     '<div class="text-xs text-gray-500">' + _rFmt(r.date) + (r.slot ? ' \u00B7 ' + _rEsc(r.slot) : '') + ' \u00B7 ' + _rEsc((r.zones || []).join(', ')) + '</div></div>' +
                     '<div class="text-right"><div class="font-extrabold ' + (r.payStatus === 'Paid' ? 'text-emerald-700' : 'text-amber-700') + '">' + _rInr(r.amountGiven) + '</div>' +
                     '<div class="text-[11px] font-bold ' + (r.payStatus === 'Paid' ? 'text-emerald-600' : 'text-amber-600') + '">' + _rEsc(r.payStatus || 'Pending') + ' \u00B7 ' + _rEsc(r.payMode || '') + '</div></div></div>' +
-                    '<div class="text-xs text-gray-600 mt-2">\uD83E\uDDF3 ' + pn + '</div>' +
+                    '<div class="text-xs text-gray-600 mt-2">\uD83E\uDDF3 ' + pn + '</div>' + grpStrip +
                     '<div class="text-xs text-gray-500 mt-1">' + (r.orderCount || 0) + ' orders \u00B7 ' + (r.totalBoxes || 0) + ' boxes \u00B7 Cash to collect ' + _rInr(r.cashToCollect) + (r.notes ? ' \u00B7 ' + _rEsc(r.notes) : '') + '</div>' +
                     '<div class="flex flex-wrap gap-2 mt-3">' +
                       '<button onclick="runPrintKey(' + i + ')" class="px-3 py-1.5 rounded-lg text-xs font-bold bg-gray-800 text-white"><i class="fas fa-print"></i> Print</button>' +
@@ -6051,8 +6118,11 @@
                       '<button onclick="runEdit(' + i + ')" class="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-100 text-amber-800">Edit amount</button>' +
                       '<button onclick="runWhatsApp(' + i + ')" class="px-3 py-1.5 rounded-lg text-xs font-bold bg-green-100 text-green-800">WhatsApp</button>' +
                       '<button onclick="runToggleDetail(' + i + ')" class="px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-100 text-blue-800">Clients &amp; locations</button>' +
-                      '<button onclick="runDelete(' + i + ')" class="px-3 py-1.5 rounded-lg text-xs font-bold bg-red-100 text-red-700">Delete</button></div>' +
-                    '<div id="runDet' + i + '" class="hidden mt-3 overflow-x-auto"><table class="w-full text-xs"><thead><tr class="text-gray-400 text-left"><th>#</th><th>Client</th><th>Location</th><th>Address</th><th>Partner</th><th class="text-right">Boxes</th></tr></thead><tbody>' + det + '</tbody></table></div></div>';
+                      grpBtn + doneBtn + delBtn + '</div>' +
+                    '<div id="runDet' + i + '" class="hidden mt-3 overflow-x-auto">' +
+                      '<div class="flex flex-wrap items-center justify-between gap-2 mb-2"><span class="text-[11px] font-bold text-gray-400 uppercase">Clients &amp; locations list</span>' +
+                      '<button onclick="runPrintListKey(' + i + ')" class="px-3 py-1.5 rounded-lg text-xs font-bold bg-gray-800 text-white hover:bg-black" title="Print this list on A4"><i class="fas fa-print"></i> Print list (A4)</button></div>' +
+                      '<table class="w-full text-xs"><thead><tr class="text-gray-400 text-left"><th>#</th><th>Client</th><th>Location</th><th>Address</th><th>Partner</th><th>Group</th><th class="text-right">Boxes</th></tr></thead><tbody>' + det + '</tbody></table></div></div>';
             }).join('') : '<div class="bg-white rounded-2xl p-8 text-center text-gray-400 border border-gray-100">No runs in this range.</div>';
             var ps = Object.keys(perP).sort();
             document.getElementById('runPartSummary').innerHTML = '<h3 class="font-bold text-gray-800 mb-2">Partner summary (this range)</h3>' + (ps.length ?
@@ -6065,10 +6135,15 @@
 
         window.runDelete = function(i) {
             var k = window._runHistKeys[i], r = window._runs[k]; if (!r) return;
-            if (!confirm('Delete run "' + r.name + '"? Its ' + (r.orderCount || 0) + ' orders will become free to group again.')) return;
-            var u = {}; u['deliveryRuns/' + currentUid + '/' + k] = null;
+            var why = _rRunLock(r);
+            if (why) { alert('This run cannot be deleted.\n\n' + _rLockText(why) + '\nYou can still set Porter groups and edit amounts.'); return; }
+            if (!confirm('Delete run "' + r.name + '"?\n\nIts ' + (r.orderCount || 0) + ' orders become free to group again.\nYou can bring this run back from "Deleted runs" at the bottom of History.')) return;
+            var u = {};
+            u['deliveryRuns/' + currentUid + '/' + k + '/deleted'] = true;
+            u['deliveryRuns/' + currentUid + '/' + k + '/deletedAt'] = Date.now();
             (r.orders || []).forEach(function(o) { u['orders/' + o.oid + '/runId'] = null; u['orders/' + o.oid + '/runName'] = null; });
-            update(ref(db), u).then(function() { showToast('Run deleted'); });
+            update(ref(db), u).then(function() { showToast('Run deleted \u2013 you can restore it from "Deleted runs"'); })
+                .catch(function(e) { showToast('Could not delete: ' + (e && e.message ? e.message : e)); });
         };
 
         window.runEdit = function(i) {
@@ -6109,7 +6184,7 @@
         window.runWhatsApp = function(i) {
             var k = window._runHistKeys[i], r = window._runs[k]; if (!r) return;
             var lines = ['*' + r.name + '* \u2013 ' + _rFmt(r.date) + (r.slot ? ' ' + r.slot : ''), r.orderCount + ' orders, ' + r.totalBoxes + ' boxes, cash to collect ' + _rInr(r.cashToCollect), ''];
-            (r.orders || []).forEach(function(o, j) { lines.push((j + 1) + '. ' + o.customer + ' \u2013 ' + (o.zone || '') + ' ' + (o.address || o.building) + ' (' + o.boxes + ' boxes' + (o.prepaid ? ', prepaid' : ', collect ' + _rInr(o.amount)) + ')'); });
+            (r.orders || []).forEach(function(o, j) { lines.push((j + 1) + '. ' + (o.pgroup ? '[' + o.pgroup + '] ' : '') + o.customer + ' \u2013 ' + (o.zone || '') + ' ' + (o.address || o.building) + ' (' + o.boxes + ' boxes' + (o.prepaid ? ', prepaid' : ', collect ' + _rInr(o.amount)) + ')'); });
             var ph = ((r.partners || []).length === 1 ? String(r.partners[0].phone || '').replace(/\D/g, '') : '');
             if (ph && ph.length === 10) ph = '91' + ph;
             window.open('https://wa.me/' + ph + '?text=' + encodeURIComponent(lines.join('\n')), '_blank');
@@ -6120,14 +6195,14 @@
             keys.forEach(function(k) {
                 var r = window._runs[k], pn = (r.partners || []).map(function(p) { return p.name; }).join(', ');
                 (r.orders || []).forEach(function(o) {
-                    rows.push([_rFmt(r.date), r.slot || '', r.name, pn, o.customer, o.phone, o.zone, o.address || o.building, o.items, o.boxes, o.amount, o.prepaid ? 'Prepaid' : 'Collect', r.amountGiven || 0, r.payStatus || 'Pending', r.payMode || '']);
+                    rows.push([_rFmt(r.date), r.slot || '', r.name, pn, o.pgroup || '', o.customer, o.phone, o.zone, o.address || o.building, o.items, o.boxes, o.amount, o.prepaid ? 'Prepaid' : 'Collect', r.amountGiven || 0, r.payStatus || 'Pending', r.payMode || '']);
                 });
             });
             if (!rows.length) { showToast('No runs to export'); return; }
             try {
                 downloadXlsx('Oligo_DeliveryRuns_' + new Date().toISOString().slice(0, 10) + '.xlsx', 'Delivery Runs',
-                    ['Date', 'Slot', 'Group', 'Partners', 'Client', 'Phone', 'Location', 'Address', 'Items', 'Boxes', 'Order Amount', 'Prepaid / Collect', 'Group Amount Given', 'Pay Status', 'Pay Mode'],
-                    rows, [10, 10, 22, 22, 22, 14, 18, 40, 40, 8, 12, 14, 16, 12, 10]);
+                    ['Date', 'Slot', 'Group', 'Partners', 'Porter Group', 'Client', 'Phone', 'Location', 'Address', 'Items', 'Boxes', 'Order Amount', 'Prepaid / Collect', 'Group Amount Given', 'Pay Status', 'Pay Mode'],
+                    rows, [10, 10, 22, 22, 10, 22, 14, 18, 40, 40, 8, 12, 14, 16, 12, 10]);
                 showToast('\uD83D\uDCE5 Saved ' + rows.length + ' rows to Excel');
             } catch (e) { console.error(e); showToast('Excel export failed'); }
         };
@@ -6141,6 +6216,7 @@
             (run.partners || []).forEach(function(p) { if (!byP[p.name]) { byP[p.name] = { p: p, recs: [] }; order.push(p.name); } });
             all.forEach(function(r) { if (!byP[r.partner]) { byP[r.partner] = { p: { name: r.partner, phone: '', amount: 0 }, recs: [] }; order.push(r.partner); } byP[r.partner].recs.push(r); });
             order = order.filter(function(n) { return byP[n].recs.length; });
+            if (_rHasGroups(run)) { var _gb = _rGroupBlocks(run); order = _gb.order; byP = _gb.byP; }
             var N = order.length, status = run.payStatus || 'Pending';
             var blocks = order.map(function(n, bi) {
                 var g = byP[n], recs = g.recs.slice().sort(function(a, b) { return String(a.zone).localeCompare(String(b.zone)) || String(a.customer).localeCompare(String(b.customer)); });
@@ -6155,7 +6231,7 @@
                 }).join('');
                 return '<div class="blk">' +
                     '<div class="meta">' +
-                      '<div class="m1"><span class="lb">Delivery ' + (bi + 1) + ' of ' + N + '</span><br><b class="nm">' + _rEsc(g.p.name) + '</b>' + (g.p.phone ? ' <span class="ph">' + _rEsc(g.p.phone) + '</span>' : '') + '</div>' +
+                      '<div class="m1"><span class="lb">' + (g.lbl ? g.lbl + ' ' : 'Delivery ') + (bi + 1) + ' of ' + N + '</span><br><b class="nm">' + _rEsc(g.p.name) + '</b>' + (g.p.phone ? ' <span class="ph">' + _rEsc(g.p.phone) + '</span>' : '') + '</div>' +
                       '<div class="m2"><span class="lb">Locations</span><br>' + _rEsc(zones.join(', ')) + '</div>' +
                       '<div class="m3"><span class="lb">Amount given</span><br><b>' + _rInr(g.p.amount) + '</b> \u00B7 ' + _rEsc(status) + '</div>' +
                     '</div>' +
@@ -6197,6 +6273,7 @@
             (run.partners || []).forEach(function(p) { if (!byP[p.name]) { byP[p.name] = { p: p, recs: [] }; order.push(p.name); } });
             all.forEach(function(r) { if (!byP[r.partner]) { byP[r.partner] = { p: { name: r.partner, phone: '', amount: 0 }, recs: [] }; order.push(r.partner); } byP[r.partner].recs.push(r); });
             order = order.filter(function(n) { return byP[n].recs.length; });
+            if (_rHasGroups(run)) { var _gb = _rGroupBlocks(run); order = _gb.order; byP = _gb.byP; }
             var N = order.length, status = run.payStatus || 'Pending';
             var blocks = order.map(function(n, bi) {
                 var g = byP[n], recs = g.recs.slice().sort(function(a, b) { return String(a.zone).localeCompare(String(b.zone)) || String(a.customer).localeCompare(String(b.customer)); });
@@ -6215,7 +6292,7 @@
                 }).join('');
                 return '<div class="blk">' +
                     '<div class="meta">' +
-                      '<div class="m1"><span class="lb">Delivery ' + (bi + 1) + ' of ' + N + '</span><b class="nm">' + _rEsc(g.p.name) + '</b>' + (g.p.phone ? '<span class="ph">' + _rEsc(g.p.phone) + '</span>' : '') + '</div>' +
+                      '<div class="m1"><span class="lb">' + (g.lbl ? g.lbl + ' ' : 'Delivery ') + (bi + 1) + ' of ' + N + '</span><b class="nm">' + _rEsc(g.p.name) + '</b>' + (g.p.phone ? '<span class="ph">' + _rEsc(g.p.phone) + '</span>' : '') + '</div>' +
                       '<div class="m2"><span class="lb">Locations</span>' + _rEsc(zones.join(', ')) + '</div>' +
                       '<div class="m3"><span class="lb">Amount given</span><b>' + _rInr(g.p.amount) + '</b> \u00B7 ' + _rEsc(status) + '</div>' +
                     '</div>' +
@@ -6253,6 +6330,372 @@
                 '<script>window.onload=function(){setTimeout(function(){window.print();},300);};<\/script></body></html>';
             var w = window.open('', '_blank', 'width=900,height=900');
             if (!w) { showToast('Allow pop-ups to print the address sheet'); return; }
+            w.document.write(h); w.document.close();
+        };
+
+        // =====================================================================
+        // PORTER GROUPS + RUN LOCK
+        //  - A client can be given a group letter (A, B, C, D ...). Same letter = one porter group.
+        //  - Each group can have a porter name and the expense given to that porter.
+        //  - A run whose delivery is completed (marked Completed, or any of its orders is Delivered)
+        //    can no longer be deleted. Groups / amounts can still be edited afterwards.
+        // =====================================================================
+        var _RG_PAL = [
+            { bg: '#ede9fe', fg: '#5b21b6', bd: '#c4b5fd' }, { bg: '#dbeafe', fg: '#1e40af', bd: '#93c5fd' },
+            { bg: '#dcfce7', fg: '#166534', bd: '#86efac' }, { bg: '#ffedd5', fg: '#9a3412', bd: '#fdba74' },
+            { bg: '#fce7f3', fg: '#9d174d', bd: '#f9a8d4' }, { bg: '#cffafe', fg: '#155e75', bd: '#67e8f9' },
+            { bg: '#fef9c3', fg: '#854d0e', bd: '#fde047' }, { bg: '#fee2e2', fg: '#991b1b', bd: '#fca5a5' }
+        ];
+        function _rGrpColor(g) {
+            if (!g) return { bg: '#ffffff', fg: '#334155', bd: '#cbd5e1' };
+            return _RG_PAL[String(g).charCodeAt(0) % _RG_PAL.length];
+        }
+        function _rGrpNorm(v) { return String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 3); }
+        function _rGrpBadge(g) {
+            if (!g) return '<span style="color:#cbd5e1;">\u2013</span>';
+            var c = _rGrpColor(g);
+            return '<span style="display:inline-block;min-width:22px;text-align:center;font-weight:800;font-size:11px;color:' + c.fg + ';background:' + c.bg + ';border:1.5px solid ' + c.bd + ';border-radius:99px;padding:1px 7px;">' + _rEsc(g) + '</span>';
+        }
+        function _rGrpInputHtml(i, r) {
+            var g = (window._runGrp || {})[r.oid] || '', c = _rGrpColor(g);
+            return '<div style="flex-shrink:0;text-align:center;" onclick="event.stopPropagation()">' +
+                '<div style="font-size:8px;font-weight:800;color:#7c3aed;letter-spacing:.07em;margin-bottom:2px;">GROUP</div>' +
+                '<input type="text" maxlength="3" value="' + _rEsc(g) + '" placeholder="\u2013" onclick="event.stopPropagation()" oninput="runSetGrp(' + i + ',this)" ' +
+                'style="width:48px;text-align:center;font-weight:800;font-size:16px;text-transform:uppercase;border:2px solid ' + c.bd + ';background:' + c.bg + ';color:' + c.fg + ';border-radius:10px;padding:5px 2px;outline:none;"></div>';
+        }
+        function _rHasGroups(run) { return (run.orders || []).some(function(o) { return o && o.pgroup; }); }
+        function _rGroupBlocks(run) {
+            var ginfo = {}, byG = {}, order = [];
+            (run.groups || []).forEach(function(g) { ginfo[g.label] = g; });
+            (run.orders || []).forEach(function(r) {
+                var k = r.pgroup || '~';
+                if (!byG[k]) {
+                    var gi = ginfo[k] || {};
+                    byG[k] = { p: { name: k === '~' ? 'No group' : 'Group ' + k + (gi.name ? ' \u2013 ' + gi.name : ''), phone: '', amount: gi.amount || 0 }, recs: [], lbl: 'Porter group' };
+                    order.push(k);
+                }
+                byG[k].recs.push(r);
+            });
+            order.sort(function(a, b) { if (a === '~') return 1; if (b === '~') return -1; return String(a).localeCompare(String(b)); });
+            return { order: order, byP: byG };
+        }
+        function _rGroupSummary(run) {
+            var ginfo = {}, m = {}, out = [];
+            (run.groups || []).forEach(function(g) { ginfo[g.label] = g; });
+            (run.orders || []).forEach(function(r) {
+                if (!r.pgroup) return;
+                var x = m[r.pgroup] || (m[r.pgroup] = { label: r.pgroup, name: (ginfo[r.pgroup] || {}).name || '', amount: (ginfo[r.pgroup] || {}).amount || 0, n: 0, boxes: 0, zones: [] });
+                x.n++; x.boxes += (parseInt(r.boxes) || 0);
+                var z = _rShortLoc(r.zone) || 'No location'; if (x.zones.indexOf(z) < 0) x.zones.push(z);
+            });
+            Object.keys(m).sort().forEach(function(k) { out.push(m[k]); });
+            return out;
+        }
+        // '' = deletable, otherwise the reason it is locked
+        function _rRunLock(run) {
+            if (!run) return '';
+            if (run.status === 'COMPLETED') return 'completed';
+            var delivered = (run.orders || []).some(function(o) { var x = ordersData && o && ordersData[o.oid]; return x && x.status === 'DELIVERED'; });
+            if (delivered) return 'delivered';
+            if (run.date && String(run.date) < _rDay(Date.now())) return 'past';
+            return '';
+        }
+        function _rLockText(w) {
+            return w === 'completed' ? 'This run is marked Completed, so it is locked to protect your records.' :
+                   w === 'delivered' ? 'Some of its orders are already Delivered, so it is locked to protect your records.' :
+                   'This run is from an earlier day, so it is locked to protect your records.';
+        }
+
+        // ----- Make Runs: group entry -----
+        window.runSetGrp = function(i, el) {
+            var r = window._runShown[i]; if (!r) return;
+            var v = _rGrpNorm(el.value); el.value = v;
+            if (v) window._runGrp[r.oid] = v; else delete window._runGrp[r.oid];
+            var c = _rGrpColor(v); el.style.borderColor = c.bd; el.style.background = c.bg; el.style.color = c.fg;
+            if (v && !window._runSel[r.oid]) {            // giving a client a group also ticks it
+                window._runSel[r.oid] = true;
+                try {
+                    var lab = el.closest('label');
+                    if (lab) {
+                        var cb = lab.querySelector('input[type=checkbox]'); if (cb) cb.checked = true;
+                        lab.className = lab.className.replace('border-gray-200 hover:bg-gray-50', 'border-emerald-400 bg-emerald-50');
+                    }
+                } catch (e) {}
+            }
+            runRefreshForm();
+        };
+        window.runApplyGrp = function() {
+            var v = _rGrpNorm((document.getElementById('runGrpQuick') || {}).value);
+            if (!v) { showToast('Type a group letter first (A, B, C\u2026)'); return; }
+            var recs = _rSelected();
+            if (!recs.length) { showToast('Tick some clients (or tap a location) first'); return; }
+            recs.forEach(function(r) { window._runGrp[r.oid] = v; });
+            renderRunsTab();
+            showToast('Group ' + v + ' set for ' + recs.length + ' client' + (recs.length === 1 ? '' : 's'));
+        };
+        window.runClearGrp = function() { window._runGrp = {}; window._runGrpInfo = {}; renderRunsTab(); showToast('Groups cleared'); };
+        window.runGrpInfoChange = function(gi, field, v) {
+            var g = (window._runGrpLabels || [])[gi]; if (!g) return;
+            var inf = window._runGrpInfo[g] || (window._runGrpInfo[g] = { name: '', amount: '' });
+            inf[field] = v;
+            if (field === 'amount') {
+                var sum = 0, any = false;
+                (window._runGrpLabels || []).forEach(function(l) { var x = parseFloat((window._runGrpInfo[l] || {}).amount); if (!isNaN(x) && x > 0) { sum += x; any = true; } });
+                var t = document.getElementById('runTotalAmt'); if (t && any) t.value = sum;
+            }
+        };
+
+        // ----- History: complete / reopen -----
+        window.runComplete = function(i) {
+            var k = window._runHistKeys[i], r = window._runs[k]; if (!r) return;
+            if (!confirm('Mark "' + r.name + '" as COMPLETED?\n\nOnce completed, this run can no longer be deleted.\nYou can still set Porter groups and edit amounts.')) return;
+            update(ref(db, 'deliveryRuns/' + currentUid + '/' + k), { status: 'COMPLETED', completedAt: Date.now() })
+                .then(function() { showToast('\u2705 Run marked completed'); })
+                .catch(function(e) { showToast('Could not update: ' + (e && e.message ? e.message : e)); });
+        };
+        window.runReopen = function(i) {
+            var k = window._runHistKeys[i], r = window._runs[k]; if (!r) return;
+            if (!confirm('Reopen "' + r.name + '"?\n\nIt will be un-completed (it stays locked if any of its orders is already Delivered).')) return;
+            update(ref(db, 'deliveryRuns/' + currentUid + '/' + k), { status: 'ACTIVE', completedAt: null })
+                .then(function() { showToast('Run reopened'); });
+        };
+
+        // ----- History: set / edit porter groups of a saved run (also allowed after delivery) -----
+        window.runGroupsEdit = function(i) {
+            var k = window._runHistKeys[i], r = window._runs[k]; if (!r) return;
+            window._rgKey = k;
+            window._rgOrders = JSON.parse(JSON.stringify(r.orders || []));
+            window._rgInfo = {};
+            (r.groups || []).forEach(function(g) { window._rgInfo[g.label] = { name: g.name || '', amount: g.amount || '' }; });
+            var old = document.getElementById('runGroupsModal'); if (old) old.remove();
+            var locs = [];
+            window._rgOrders.forEach(function(o) { var z = _rShortLoc(o.zone) || 'No location'; if (locs.indexOf(z) < 0) locs.push(z); });
+            locs.sort();
+            var m = document.createElement('div'); m.id = 'runGroupsModal';
+            m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9998;display:flex;align-items:center;justify-content:center;padding:12px;';
+            m.innerHTML = '<div style="background:#fff;border-radius:18px;width:100%;max-width:780px;max-height:94vh;display:flex;flex-direction:column;overflow:hidden;">' +
+                '<div style="padding:16px 18px;border-bottom:1px solid #e5e7eb;"><div style="font-size:17px;font-weight:800;color:#1f2937;">\uD83D\uDC65 Porter groups \u2013 ' + _rEsc(r.name) + '</div>' +
+                '<div style="font-size:12px;color:#6b7280;margin-top:2px;">Type A / B / C / D\u2026 beside each client. Same letter = one porter group. Then enter each group\u2019s porter name and expense.</div></div>' +
+                '<div style="padding:10px 18px;border-bottom:1px solid #f1f5f9;background:#f5f3ff;display:flex;flex-wrap:wrap;gap:8px;align-items:center;">' +
+                  '<span style="font-size:12px;font-weight:700;color:#5b21b6;">Quick:</span>' +
+                  '<select id="rgQLoc" style="border:1px solid #d1d5db;border-radius:8px;padding:6px 8px;font-size:12px;"><option value="">All clients</option>' + locs.map(function(z) { return '<option value="' + _rEsc(z) + '">' + _rEsc(z) + '</option>'; }).join('') + '</select>' +
+                  '<span style="font-size:12px;color:#475569;">\u2192 group</span>' +
+                  '<input id="rgQGrp" maxlength="3" placeholder="A" oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9]/g,\'\')" style="width:50px;text-align:center;font-weight:800;border:2px solid #c4b5fd;border-radius:10px;padding:5px 2px;text-transform:uppercase;">' +
+                  '<button onclick="rgQuick()" style="background:#7c3aed;color:#fff;border:none;border-radius:10px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;">Apply</button>' +
+                  '<button onclick="rgClearAll()" style="background:#fff;color:#6b7280;border:1px solid #d1d5db;border-radius:10px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;">Clear all</button>' +
+                '</div>' +
+                '<div style="overflow-y:auto;flex:1;">' +
+                  '<div id="rgGroups" style="padding:12px 18px 0;"></div>' +
+                  '<div id="rgRows" style="padding:8px 18px 14px;"></div>' +
+                '</div>' +
+                '<div style="padding:12px 18px;border-top:1px solid #e5e7eb;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">' +
+                  '<div id="rgTotal" style="font-size:13px;font-weight:800;color:#065f46;"></div>' +
+                  '<div style="display:flex;gap:8px;"><button onclick="document.getElementById(\'runGroupsModal\').remove()" style="padding:9px 16px;border-radius:10px;border:1px solid #e5e7eb;background:#fff;font-weight:600;cursor:pointer;">Cancel</button>' +
+                  '<button onclick="rgSave()" style="padding:9px 20px;border-radius:10px;border:none;background:#059669;color:#fff;font-weight:800;cursor:pointer;">Save groups</button></div>' +
+                '</div></div>';
+            document.body.appendChild(m);
+            rgRenderRows(); rgRenderGroups();
+        };
+        function rgRenderRows() {
+            var el = document.getElementById('rgRows'); if (!el) return;
+            var idx = window._rgOrders.map(function(o, n) { return n; });
+            idx.sort(function(a, b) {
+                var A = window._rgOrders[a], B = window._rgOrders[b];
+                return String(_rShortLoc(A.zone) || 'zzz').localeCompare(String(_rShortLoc(B.zone) || 'zzz')) || String(A.customer).localeCompare(String(B.customer));
+            });
+            el.innerHTML = idx.map(function(n, j) {
+                var o = window._rgOrders[n], g = o.pgroup || '', c = _rGrpColor(g);
+                return '<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid #f1f5f9;">' +
+                    '<span style="width:22px;color:#94a3b8;font-size:11px;">' + (j + 1) + '</span>' +
+                    '<div style="flex:1;min-width:0;"><div style="font-weight:700;font-size:13px;color:#1f2937;">' + _rEsc(o.customer) + '</div>' +
+                    '<div style="font-size:11px;color:#64748b;"><span style="color:#1d4ed8;font-weight:700;">' + _rEsc(_rShortLoc(o.zone) || 'No location') + '</span> \u00B7 ' + (parseInt(o.boxes) || 0) + ' boxes</div></div>' +
+                    '<input type="text" maxlength="3" value="' + _rEsc(g) + '" placeholder="\u2013" oninput="rgSet(' + n + ',this)" style="width:52px;text-align:center;font-weight:800;font-size:16px;text-transform:uppercase;border:2px solid ' + c.bd + ';background:' + c.bg + ';color:' + c.fg + ';border-radius:10px;padding:5px 2px;outline:none;"></div>';
+            }).join('');
+        }
+        function rgRenderGroups() {
+            var el = document.getElementById('rgGroups'); if (!el) return;
+            var gm = {}, ung = 0;
+            window._rgOrders.forEach(function(o) {
+                if (!o.pgroup) { ung++; return; }
+                var x = gm[o.pgroup] || (gm[o.pgroup] = { n: 0, b: 0, z: [] });
+                x.n++; x.b += (parseInt(o.boxes) || 0); var z = _rShortLoc(o.zone) || 'No location'; if (x.z.indexOf(z) < 0) x.z.push(z);
+            });
+            var labels = Object.keys(gm).sort(); window._rgLabels = labels;
+            el.innerHTML = labels.length ? '<div style="font-size:11px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Groups \u2013 porter &amp; expense</div>' +
+                labels.map(function(g, gi) {
+                    var x = gm[g], c = _rGrpColor(g), inf = window._rgInfo[g] || {};
+                    return '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;border:1.5px solid ' + c.bd + ';background:' + c.bg + ';border-radius:12px;padding:8px 10px;margin-bottom:8px;">' +
+                        '<span style="font-weight:800;font-size:18px;color:' + c.fg + ';min-width:28px;">' + _rEsc(g) + '</span>' +
+                        '<div style="flex:1;min-width:150px;"><div style="font-size:11px;font-weight:700;color:#475569;">' + x.n + ' client' + (x.n === 1 ? '' : 's') + ' \u00B7 ' + x.b + ' boxes</div><div style="font-size:11px;color:#334155;">\uD83D\uDCCD ' + _rEsc(x.z.join(', ')) + '</div></div>' +
+                        '<input type="text" placeholder="Porter name" value="' + _rEsc(inf.name || '') + '" oninput="rgInfo(' + gi + ',\'name\',this.value)" style="width:140px;border:1px solid #d1d5db;border-radius:8px;padding:6px 8px;font-size:12px;background:#fff;">' +
+                        '<input type="number" min="0" placeholder="\u20B9 amount" value="' + _rEsc(inf.amount || '') + '" oninput="rgInfo(' + gi + ',\'amount\',this.value)" style="width:96px;border:1px solid #d1d5db;border-radius:8px;padding:6px 8px;font-size:12px;background:#fff;"></div>';
+                }).join('') : '<p style="font-size:12px;color:#94a3b8;margin:0 0 6px;">No groups yet \u2013 type a letter beside the clients below.</p>';
+            if (ung && labels.length) el.innerHTML += '<p style="font-size:11px;font-weight:700;color:#b45309;margin:0 0 6px;">\u26A0 ' + ung + ' client' + (ung === 1 ? ' has' : 's have') + ' no group</p>';
+            rgTotal();
+        }
+        function rgTotal() {
+            var sum = 0; (window._rgLabels || []).forEach(function(l) { sum += parseFloat((window._rgInfo[l] || {}).amount) || 0; });
+            var t = document.getElementById('rgTotal'); if (t) t.textContent = 'Total given to porters: ' + _rInr(sum);
+        }
+        window.rgSet = function(n, el) {
+            var v = _rGrpNorm(el.value); el.value = v;
+            window._rgOrders[n].pgroup = v;
+            var c = _rGrpColor(v); el.style.borderColor = c.bd; el.style.background = c.bg; el.style.color = c.fg;
+            rgRenderGroups();
+        };
+        window.rgInfo = function(gi, field, v) {
+            var g = (window._rgLabels || [])[gi]; if (!g) return;
+            var inf = window._rgInfo[g] || (window._rgInfo[g] = { name: '', amount: '' }); inf[field] = v;
+            if (field === 'amount') rgTotal();
+        };
+        window.rgQuick = function() {
+            var v = _rGrpNorm((document.getElementById('rgQGrp') || {}).value);
+            if (!v) { showToast('Type a group letter first'); return; }
+            var loc = (document.getElementById('rgQLoc') || {}).value || '';
+            window._rgOrders.forEach(function(o) { if (!loc || (_rShortLoc(o.zone) || 'No location') === loc) o.pgroup = v; });
+            rgRenderRows(); rgRenderGroups();
+        };
+        window.rgClearAll = function() { window._rgOrders.forEach(function(o) { o.pgroup = ''; }); rgRenderRows(); rgRenderGroups(); };
+        window.rgSave = function() {
+            var k = window._rgKey, run = window._runs[k]; if (!run) return;
+            var ord = window._rgOrders, info = window._rgInfo, labels = [];
+            ord.forEach(function(o) { o.pgroup = o.pgroup || ''; if (o.pgroup && labels.indexOf(o.pgroup) < 0) labels.push(o.pgroup); });
+            labels.sort();
+            var groups = labels.map(function(g) {
+                var rr = ord.filter(function(x) { return x.pgroup === g; }), zs = [], bx = 0;
+                rr.forEach(function(x) { var z = _rShortLoc(x.zone) || 'No location'; if (zs.indexOf(z) < 0) zs.push(z); bx += (parseInt(x.boxes) || 0); });
+                var inf = info[g] || {};
+                return { label: g, name: String(inf.name || '').trim(), amount: parseFloat(inf.amount) || 0, orderCount: rr.length, boxes: bx, zones: zs };
+            });
+            var sum = groups.reduce(function(a, g) { return a + g.amount; }, 0);
+            var upd = { orders: ord, groups: groups };
+            if (sum > 0) {
+                upd.amountGiven = sum;
+                if ((run.partners || []).length === 1) { var p0 = run.partners[0]; upd.partners = [{ name: p0.name || '', phone: p0.phone || '', amount: sum }]; }
+            }
+            update(ref(db, 'deliveryRuns/' + currentUid + '/' + k), upd).then(function() {
+                var m = document.getElementById('runGroupsModal'); if (m) m.remove();
+                showToast('\u2705 Porter groups saved');
+            }).catch(function(e) { console.error(e); showToast('Could not save groups: ' + (e && e.message ? e.message : e)); });
+        };
+
+        // ----- Deleted runs: restore -----
+        window.renderRunTrash = function() {
+            var el = document.getElementById('runTrashList'); if (!el) return;
+            var d = window._runsDeleted || {}, keys = Object.keys(d).sort(function(a, b) { return (d[b].deletedAt || 0) - (d[a].deletedAt || 0); });
+            window._runTrashKeys = keys;
+            if (!keys.length) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+            el.classList.remove('hidden');
+            el.innerHTML = '<div class="bg-white p-4 md:p-5 rounded-2xl card-shadow border border-gray-100"><h3 class="font-bold text-gray-800 mb-1">Deleted runs</h3>' +
+                '<p class="text-xs text-gray-500 mb-3">Deleted by mistake? Restore brings back the run with its groups, porters and amounts.</p>' +
+                keys.map(function(k, i) {
+                    var r = d[k], dt = r.deletedAt ? new Date(r.deletedAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+                    return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;border-top:1px solid #f1f5f9;padding:8px 0;flex-wrap:wrap;">' +
+                        '<div><div style="font-weight:700;font-size:13px;color:#1f2937;">' + _rEsc(r.name) + ' <span style="font-weight:400;font-size:11px;color:#94a3b8;">#' + (r.runNo || 1) + '</span></div>' +
+                        '<div style="font-size:11px;color:#64748b;">' + _rFmt(r.date) + (r.slot ? ' \u00B7 ' + _rEsc(r.slot) : '') + ' \u00B7 ' + (r.orderCount || 0) + ' orders \u00B7 ' + (r.totalBoxes || 0) + ' boxes' + (dt ? ' \u00B7 deleted ' + dt : '') + '</div></div>' +
+                        '<button onclick="runRestore(' + i + ')" style="background:#059669;color:#fff;border:none;border-radius:10px;padding:7px 14px;font-size:12px;font-weight:800;cursor:pointer;">Restore</button></div>';
+                }).join('') + '</div>';
+        };
+        var _origRenderRunHistory = window.renderRunHistory;
+        window.renderRunHistory = function() { _origRenderRunHistory(); window.renderRunTrash(); };
+        window.runRestore = function(i) {
+            var k = (window._runTrashKeys || [])[i], r = (window._runsDeleted || {})[k]; if (!r) return;
+            var clash = (r.orders || []).filter(function(o) { var x = ordersData && ordersData[o.oid]; return x && x.runId && x.runId !== k; });
+            if (clash.length) { alert('Cannot restore yet.\n\n' + clash.length + ' order(s) of this run are already in another run. Remove that run first, then restore.'); return; }
+            if (!confirm('Restore "' + r.name + '"?')) return;
+            var u = {};
+            u['deliveryRuns/' + currentUid + '/' + k + '/deleted'] = null;
+            u['deliveryRuns/' + currentUid + '/' + k + '/deletedAt'] = null;
+            (r.orders || []).forEach(function(o) { u['orders/' + o.oid + '/runId'] = k; u['orders/' + o.oid + '/runName'] = r.name; });
+            update(ref(db), u).then(function() { showToast('\u2705 Run restored'); })
+                .catch(function(e) { showToast('Could not restore: ' + (e && e.message ? e.message : e)); });
+        };
+
+        // ---------- A4 print of the "Clients & locations" list (grouped by porter group if set, else by location) ----------
+        window.runPrintListKey = function(i) { var r = window._runs[window._runHistKeys[i]]; if (r) runPrintListObj(r); };
+        window.runPrintListObj = function(run) {
+            var recs = (run.orders || []).slice();
+            if (!recs.length) { showToast('No clients in this run'); return; }
+            var useG = _rHasGroups(run), ginfo = {};
+            (run.groups || []).forEach(function(g) { ginfo[g.label] = g; });
+            var locOf = function(r) { return _rShortLoc(r.zone) || 'No location'; };
+            recs.sort(function(a, b) {
+                if (useG) { var ga = a.pgroup || '~', gb = b.pgroup || '~'; if (ga !== gb) { if (ga === '~') return 1; if (gb === '~') return -1; return String(ga).localeCompare(String(gb)); } }
+                return String(_rShortLoc(a.zone) || 'zzz').localeCompare(String(_rShortLoc(b.zone) || 'zzz')) || String(a.customer).localeCompare(String(b.customer));
+            });
+            var groups = [], gmap = {};
+            recs.forEach(function(r) {
+                var key = useG ? (r.pgroup || '~') : locOf(r);
+                if (!gmap[key]) { gmap[key] = { key: key, rows: [], boxes: 0, zones: [] }; groups.push(gmap[key]); }
+                gmap[key].rows.push(r); gmap[key].boxes += (parseInt(r.boxes) || 0);
+                if (gmap[key].zones.indexOf(locOf(r)) < 0) gmap[key].zones.push(locOf(r));
+            });
+            var partners = [];
+            recs.forEach(function(r) { if (r.partner && partners.indexOf(r.partner) < 0) partners.push(r.partner); });
+            var totalBoxes = recs.reduce(function(a, r) { return a + (parseInt(r.boxes) || 0); }, 0);
+            var cash = recs.reduce(function(a, r) { return a + (r.prepaid ? 0 : (parseFloat(r.amount) || 0)); }, 0);
+            var locCount = {}; recs.forEach(function(r) { locCount[locOf(r)] = 1; });
+            var chipCss = function(g) { var c = _rGrpColor(g); return 'background:' + c.bg + ';color:' + c.fg + ';border:1.5px solid ' + c.bd + ';'; };
+
+            var n = 0, body = '', glance = '', gAmtTotal = 0;
+            groups.forEach(function(g) {
+                var gi = ginfo[g.key] || {}, amt = parseFloat(gi.amount) || 0; gAmtTotal += amt;
+                if (useG) {
+                    var isNo = g.key === '~';
+                    body += '<tr class="gh"><td colspan="5"><span class="gb" style="' + (isNo ? 'background:#f1f5f9;color:#64748b;border:1.5px solid #cbd5e1;' : chipCss(g.key)) + '">' + (isNo ? '?' : _rEsc(g.key)) + '</span>' +
+                        '<span class="gp">' + (isNo ? 'No group' : (gi.name ? _rEsc(gi.name) : 'Group ' + _rEsc(g.key))) + '</span><span class="gz">\uD83D\uDCCD ' + _rEsc(g.zones.join(', ')) + '</span>' +
+                        '<span class="gc">' + g.rows.length + ' client' + (g.rows.length === 1 ? '' : 's') + ' \u00B7 ' + g.boxes + ' boxes' + (amt ? ' \u00B7 ' + _rInr(amt) : '') + '</span></td></tr>';
+                    glance += '<tr><td class="c"><span class="gb" style="' + (isNo ? 'background:#f1f5f9;color:#64748b;border:1.5px solid #cbd5e1;' : chipCss(g.key)) + '">' + (isNo ? '?' : _rEsc(g.key)) + '</span></td><td>' + _rEsc(isNo ? 'No group' : (gi.name || '\u2014')) + '</td><td class="ad">' + _rEsc(g.zones.join(', ')) + '</td><td class="c">' + g.rows.length + '</td><td class="c"><b>' + g.boxes + '</b></td><td class="c">' + (amt ? _rInr(amt) : '\u2014') + '</td></tr>';
+                } else {
+                    body += '<tr class="gh"><td colspan="5"><span class="gp">' + _rEsc(g.key) + '</span><span class="gc">' + g.rows.length + ' client' + (g.rows.length === 1 ? '' : 's') + ' \u00B7 ' + g.boxes + ' boxes</span></td></tr>';
+                }
+                g.rows.forEach(function(r) {
+                    n++;
+                    var addr = String(r.address || r.building || '').replace(/\s+/g, ' ').trim();
+                    body += '<tr><td class="c nn">' + n + '</td>' +
+                        '<td><b>' + _rEsc(r.customer) + '</b>' + (r.phone ? '<span class="s">' + _rEsc(r.phone) + '</span>' : '') + '</td>' +
+                        (useG ? '<td><span class="lc">' + _rEsc(locOf(r)) + '</span></td>' : '') +
+                        '<td class="ad">' + (addr ? _rEsc(addr) : '<span class="s">\u2014</span>') + '</td>' +
+                        (useG ? '' : '<td>' + _rEsc(r.partner || '') + '</td>') +
+                        '<td class="c bxs">' + (parseInt(r.boxes) || 0) + '</td></tr>';
+                });
+            });
+            if (useG) {
+                glance = '<div class="gt">Porter groups at a glance</div><table class="gl"><thead><tr><th style="width:9%" class="c">Group</th><th style="width:20%">Porter</th><th>Going to (locations)</th><th style="width:9%" class="c">Clients</th><th style="width:9%" class="c">Boxes</th><th style="width:13%" class="c">Expense</th></tr></thead><tbody>' + glance +
+                    '<tr class="tt"><td></td><td colspan="2"><b>Total</b></td><td class="c"><b>' + recs.length + '</b></td><td class="c"><b>' + totalBoxes + '</b></td><td class="c"><b>' + (gAmtTotal ? _rInr(gAmtTotal) : '\u2014') + '</b></td></tr></tbody></table>';
+            }
+
+            var d = String(run.date || '').split('-');
+            var dShort = d.length === 3 ? d[2] + '/' + d[1] + '/' + d[0].slice(2) : (run.date || '');
+            var css =
+                '@page{size:A4;margin:10mm 9mm}*{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}' +
+                'html,body{width:100%;max-width:100%}body{font-family:Inter,"Segoe UI",Arial,sans-serif;font-size:10.5px;color:#0f172a;margin:0;line-height:1.35}' +
+                '.hdr{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 14px;margin-bottom:9px;border:1px solid #a7f3d0;border-left:5px solid #059669;border-radius:10px;background:#ecfdf5}' +
+                '.hdr h1{font-size:16px;margin:0;font-weight:800;letter-spacing:-.01em}.hdr h1 em{font-style:normal;font-size:8.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;background:#059669;color:#fff;padding:2px 8px;border-radius:99px;margin-left:8px;vertical-align:2px}' +
+                '.hdr h2{font-size:11.5px;margin:2px 0 0;font-weight:600;color:#334155}.hdr .dt{font-size:10.5px;font-weight:700;background:#fff;border:1px solid #a7f3d0;color:#065f46;padding:4px 11px;border-radius:99px;white-space:nowrap}' +
+                '.sum{display:flex;gap:7px;margin-bottom:8px}.sum>div{flex:1;border:1px solid #cbd5e1;border-radius:9px;padding:5px 9px;background:#f8fafc;min-width:0}.sum b{display:block;font-size:13px;margin-top:1px}.sum .w{flex:2.2}.sum .w b{font-size:10.5px;font-weight:700;overflow-wrap:anywhere}' +
+                '.lb{display:block;font-size:7.5px;color:#64748b;text-transform:uppercase;font-weight:800;letter-spacing:.07em}' +
+                'table{width:100%;table-layout:fixed;border-collapse:separate;border-spacing:0;border:1px solid #cbd5e1;border-radius:9px;overflow:hidden}' +
+                'th{background:#f1f5f9;font-size:8px;text-transform:uppercase;text-align:left;letter-spacing:.06em;color:#475569;padding:5px 7px;border-bottom:1px solid #cbd5e1}' +
+                'td{padding:4px 7px;vertical-align:middle;border-bottom:1px solid #e2e8f0;overflow-wrap:anywhere;word-break:break-word}tr{page-break-inside:avoid;break-inside:avoid}' +
+                '.c{text-align:center}th.c{text-align:center}.nn{color:#94a3b8;font-weight:600}.s{display:block;font-size:9px;color:#64748b;font-weight:500}' +
+                'td b{font-size:10.5px}.ad{font-size:9.5px;color:#1e293b;line-height:1.3}.bxs{font-weight:800;font-size:12px}' +
+                '.lc{display:inline-block;background:#d1fae5;color:#065f46;font-weight:700;font-size:8.5px;padding:1px 7px;border-radius:99px}' +
+                '.gh td{background:#ecfdf5;border-bottom:1px solid #a7f3d0;padding:5px 8px;page-break-after:avoid;break-after:avoid}' +
+                '.gb{display:inline-block;min-width:22px;text-align:center;font-weight:800;font-size:11px;border-radius:99px;padding:1px 8px;margin-right:7px}' +
+                '.gp{font-weight:800;font-size:11px;color:#065f46}.gz{font-size:9px;color:#475569;font-weight:600;margin-left:9px}.gc{float:right;font-size:9px;font-weight:700;color:#047857}' +
+                '.gt{font-size:8.5px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:.08em;margin:0 0 4px}.gl{margin-bottom:10px}.gl .tt td{background:#f8fafc;border-bottom:0}' +
+                '.foot{display:flex;justify-content:space-between;margin-top:8px;font-size:9px;color:#64748b}thead{display:table-header-group}';
+            var h = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + _rEsc(run.name) + ' \u2013 Clients & Locations</title><style>' + css + '</style></head><body>' +
+                '<div class="hdr"><div><h1>' + _rEsc(farmName || 'Oligo Farm') + ' \u2013 Clients &amp; Locations<em>' + (useG ? 'Porter groups' : 'List') + '</em></h1><h2>' + _rEsc(run.name) + ' ' + (/\brun$/i.test(String(run.name).trim()) ? '' : 'Run ') + '#' + (run.runNo || 1) + '</h2></div><div class="dt">' + dShort + (run.slot ? ' \u00B7 ' + _rEsc(run.slot) : '') + '</div></div>' +
+                '<div class="sum"><div><span class="lb">Clients</span><b>' + recs.length + '</b></div><div><span class="lb">Locations</span><b>' + Object.keys(locCount).length + '</b></div><div><span class="lb">Total boxes</span><b>' + totalBoxes + '</b></div><div><span class="lb">Cash to collect</span><b>' + _rInr(cash) + '</b></div>' +
+                '<div class="w"><span class="lb">' + (useG ? 'Porter groups' : 'Delivery partner' + (partners.length > 1 ? 's' : '')) + '</span><b>' + (useG ? (groups.filter(function(g) { return g.key !== '~'; }).length + ' groups' + (gAmtTotal ? ' \u00B7 ' + _rInr(gAmtTotal) : '')) : _rEsc(partners.join(', ') || '\u2014')) + '</b></div></div>' +
+                glance +
+                '<table><thead><tr><th style="width:5%" class="c">#</th><th style="width:' + (useG ? '22' : '25') + '%">Client</th>' + (useG ? '<th style="width:15%">Location</th>' : '') + '<th>Address</th>' + (useG ? '' : '<th style="width:17%">Partner</th>') + '<th style="width:8%" class="c">Boxes</th></tr></thead><tbody>' + body + '</tbody></table>' +
+                '<div class="foot"><span>' + _rEsc(farmName || 'Oligo Farm') + ' \u00B7 ' + _rEsc(run.name) + '</span><span>Printed ' + new Date().toLocaleDateString('en-IN') + '</span></div>' +
+                '<script>window.onload=function(){setTimeout(function(){window.print();},300);};<\/script></body></html>';
+            var w = window.open('', '_blank', 'width=900,height=900');
+            if (!w) { showToast('Allow pop-ups to print the list'); return; }
             w.document.write(h); w.document.close();
         };
 
